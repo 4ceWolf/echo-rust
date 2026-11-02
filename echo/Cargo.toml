@@ -1,0 +1,102 @@
+[package]
+name = "echo"
+version = "0.1.0"
+edition = "2021"
+description = "A local music player with real per-track depth-effect album art."
+
+# See docs/ARCHITECTURE_DECISIONS.md for why each of these, specifically -
+# every version below was checked against real docs/search results at the
+# time of writing, not assumed. Do not casually bump these without
+# re-reading that doc first, especially `ort` (still a release candidate)
+# and `wry`/`tao` (the Wayland-correctness notes in that doc depend on
+# APIs specific to these exact versions).
+
+[dependencies]
+# Playback engine. 0.25.3 confirmed current via docs.rs at write time.
+# Renamed to `gst` here (package = the real crate, gst = what src/*.rs
+# actually imports as `use gst::...`) - this was a real bug caught by
+# the first compile: every source file assumed the crate name was `gst`
+# without this rename, causing ~30 "cannot find crate `gst`" errors.
+gst = { package = "gstreamer", version = "0.25.3" }
+glib = "0.22"
+
+# UI: native webview, not Electron/Tauri. 0.56.1 is wry's current release;
+# tao is wry's own companion windowing crate, version matched to what
+# wry 0.56.1's own examples/dev-dependencies use.
+wry = "0.56.1"
+tao = "0.34"
+
+# Depth inference. Pinned to an EXACT rc version on purpose - see
+# ARCHITECTURE_DECISIONS.md's "ort version is a release candidate"
+# section. Do not change this to a caret range.
+ort = "=2.0.0-rc.12"
+# MUST match the ndarray version ort 2.0.0-rc.12 itself depends on
+# internally (0.17.x) - pinning a different version here (0.16 was the
+# original guess) causes two incompatible copies of the ndarray crate in
+# the dependency graph, which is exactly the "multiple different
+# versions of crate `ndarray`" error the first real compile produced.
+ndarray = "0.17"
+
+# Image loading/resizing for album art -> model input tensor, and for
+# building the cached depth-mask PNGs.
+image = "0.25"
+
+# Audio tag + embedded-artwork reading. `lofty` is the maintained,
+# pure-Rust replacement for the old Python art.py's `mutagen` dependency.
+# 0.25.1 confirmed current via docs.rs at write time; MIT OR Apache-2.0.
+# Default features pull in all format parsers (MP3/FLAC/MP4/Opus/Vorbis/
+# WAV/AAC/APE/MPC/WavPack) - no per-format feature toggling needed for a
+# general-purpose player. See docs/ARCHITECTURE_DECISIONS.md.
+lofty = "0.25.1"
+
+# JSON for the Rust<->JS bridge - kept deliberately boring per the
+# architecture decision to not get clever with the IPC layer.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging - see docs/TODO.md "Debugging & Logging": must log to a real
+# file, not just stdout, from day one.
+log = "0.4"
+env_logger = "0.11"
+
+# Content hashing for the art/depth-mask cache filenames (same pattern
+# the old Python art.py used: sha1 of the filepath as the cache key).
+sha1 = "0.10"
+
+# Smart-shuffle weighting. Pinned >= 0.10 deliberately: rand 0.10 (Feb
+# 2026) renamed thread_rng() -> rng() and gen_range() -> random_range().
+# queue.rs uses the NEW names - if this ever gets downgraded below 0.10,
+# it will not compile, on purpose (better a clear compile error than
+# silently picking up deprecated-but-present old names).
+rand = "0.10"
+
+# Custom error types. gstreamer-rs doesn't have one uniform error type
+# (BoolError from ElementFactory::make().build(), StateChangeError from
+# set_state(), glib::Error from gst::init()) - thiserror wraps all three
+# into one real PlayerError instead of forcing a type mismatch. See
+# src/error.rs.
+thiserror = "2.0.20"
+
+# One-shot blocking download of the depth model on first run. ureq over
+# reqwest deliberately: this is a single startup-time download, not part
+# of an async runtime elsewhere in the app, so pulling in reqwest's full
+# Tokio dependency tree for one HTTP GET isn't justified. Pinned to 3.x -
+# ureq 3.0 was a ground-up rewrite with a different API from 2.x
+# (body_mut().with_config().read_to_vec() vs the old into_reader());
+# 2.x-era examples online are stale for this version.
+ureq = "3.3.0"
+
+# SHA256 checksum verification of the downloaded depth model - see
+# docs/ARCHITECTURE_DECISIONS.md for the exact expected hash. sha1 above
+# is unrelated (used for cache-key filenames, where collision resistance
+# doesn't matter); this is for verifying a real download's integrity,
+# where it does.
+sha2 = "0.10"
+
+# No longer a direct dependency: the original ui_window.rs used
+# gtk::Fixed directly, but that approach caused the tiny/unsized window
+# bug (see ui_window.rs's doc comment) and was replaced with
+# WindowExtUnix::gtk_window() + WebViewBuilderExtUnix::new_gtk(), which
+# only needs wry's own re-exported traits, not the gtk crate itself.
+# Left this section here (rather than deleting it silently) as a record
+# of why there's no [target.'cfg(unix)'.dependencies] section anymore.
